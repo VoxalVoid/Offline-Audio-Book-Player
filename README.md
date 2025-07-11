@@ -1,6 +1,8 @@
 # Offline Audio Book Player
 
-A lightweight PyQt5 application for listening to audio books without an internet connection. It is written in a single Python file and relies on VLC for playback. The player focuses on `.m4b` books but can open several common audio formats.
+A lightweight PyQt5 application for listening to audio books without an internet connection. It is written in a single Python file and relies on VLC for playback.
+The program runs entirely offline and focuses on `.m4b` books but can open several common audio formats.
+Playback history and bookmarks are stored under `~/.config/m4bplayer` (or `%USERPROFILE%\.config\m4bplayer` on Windows).
 
 ## Features
 
