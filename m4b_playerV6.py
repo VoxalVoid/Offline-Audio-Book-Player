@@ -185,7 +185,8 @@ class Player(QtWidgets.QMainWindow):
         self._build_ui()
         self._apply_font_sizes()
         self._refresh_shelf()
-        self._create_tray()
+        self.compact = False
+        self.prev_geom = None
         self._load_last_book()
 
         self.ui_timer = QtCore.QTimer(self)
@@ -536,31 +537,33 @@ class Player(QtWidgets.QMainWindow):
     def _open_from_shelf(self, item):
         self.load_media(Path(item.data(QtCore.Qt.UserRole)))
 
-    def _create_tray(self):
-        ico_path = find_icon()
-        if ico_path:
-            icon = QtGui.QIcon(str(ico_path))
-        else:
-            icon = self.windowIcon()
-        self.tray = QtWidgets.QSystemTrayIcon(icon, self)
-        menu = QtWidgets.QMenu()
-        show = menu.addAction("Show")
-        quit_act = menu.addAction("Quit")
-        show.triggered.connect(self.show_normal_from_tray)
-        quit_act.triggered.connect(QtWidgets.qApp.quit)
-        self.tray.setContextMenu(menu)
-        self.tray.activated.connect(lambda r: self.show_normal_from_tray() if r == QtWidgets.QSystemTrayIcon.Trigger else None)
-        self.tray.show()
-
-    def show_normal_from_tray(self):
-        self.show()
-        self.raise_()
-        self.activateWindow()
+    # removed system tray support
 
     def changeEvent(self, e):
         if e.type() == QtCore.QEvent.WindowStateChange and self.isMinimized():
-            QtCore.QTimer.singleShot(0, self.hide)
+            QtCore.QTimer.singleShot(0, self._enter_compact)
         super().changeEvent(e)
+
+    def _enter_compact(self):
+        self.setWindowState(self.windowState() & ~QtCore.Qt.WindowMinimized)
+        if not self.compact:
+            self.prev_geom = self.geometry()
+            self.compact = True
+        self.resize(300, 150)
+        screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        self.move(screen.right() - self.width() - 20,
+                  screen.bottom() - self.height() - 20)
+
+    def mouseDoubleClickEvent(self, e):
+        if self.compact:
+            self._exit_compact()
+        else:
+            super().mouseDoubleClickEvent(e)
+
+    def _exit_compact(self):
+        if self.compact and self.prev_geom:
+            self.setGeometry(self.prev_geom)
+            self.compact = False
 
     def _load_last_book(self):
         last = self.resume_db.get('__last_book__')
