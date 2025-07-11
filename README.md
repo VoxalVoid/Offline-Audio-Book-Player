@@ -10,7 +10,7 @@ A lightweight PyQt5 application for listening to audio books without an internet
 - Displays metadata and cover art
 - Small settings dialog to adjust font sizes and clear stored data
 - Bookmark dialog to save and load timestamps with notes
-- System tray icon so playback can continue in the background
+- Compact mode keeps a small window visible when you try to minimize
 - Slider adjusts to long books and shows a "Continue From" label
 - Automatically reopens the last book when the program starts
 =======
