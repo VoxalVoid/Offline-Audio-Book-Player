@@ -13,6 +13,15 @@ CONFIG_DIR = HOME / '.config' / 'm4bplayer'
 RESUME_DB = CONFIG_DIR / 'resume.dat'
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
+def _log_exception(exctype, value, tb):
+    import traceback
+    home = str(Path.home())
+    trace = ''.join(traceback.format_exception(exctype, value, tb))
+    sanitized = trace.replace(home, str(Path('C:/Users/USER')))
+    print(sanitized, file=sys.stderr)
+
+sys.excepthook = _log_exception
+
 def load_resume():
     if not RESUME_DB.exists():
         return {'__bookshelf__': [], 'ui_btn_size': 10, 'ui_title_size': 12, 'volume': 100}
@@ -60,25 +69,124 @@ def find_ffprobe():
         path, _ = QFileDialog.getOpenFileName(None, "Locate ffprobe.exe", "", "Executable (*.exe)")
         return path or None
 
+def find_icon():
+    base = Path(__file__).resolve().parent
+    for p in [base / 'audio-book.ico', base / 'Images' / 'audio-book.ico', base.with_suffix('.ico')]:
+        if p.exists():
+            return p
+    return None
+
+class BookmarkDialog(QtWidgets.QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.setWindowTitle("Bookmarks")
+        self.setStyleSheet(parent.styleSheet())
+        layout = QtWidgets.QVBoxLayout(self)
+        self.table = QtWidgets.QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Book", "Time", "Note"])
+        layout.addWidget(self.table)
+
+        btns = QtWidgets.QHBoxLayout()
+        self.add_btn = QtWidgets.QPushButton("Bookmark Current Time")
+        self.load_btn = QtWidgets.QPushButton("Load Selected Bookmark")
+        self.last_btn = QtWidgets.QPushButton("Load Last Time Stamp")
+        self.del_btn = QtWidgets.QPushButton("Delete Selected")
+        btns.addWidget(self.add_btn)
+        btns.addWidget(self.load_btn)
+        btns.addWidget(self.last_btn)
+        btns.addWidget(self.del_btn)
+        layout.addLayout(btns)
+
+        self.add_btn.clicked.connect(self.add_bookmark)
+        self.load_btn.clicked.connect(self.load_selected_from_button)
+        self.last_btn.clicked.connect(lambda: parent.player.set_time(parent.prev_time))
+        self.del_btn.clicked.connect(self.delete_selected)
+        self.table.itemDoubleClicked.connect(self.load_selected)
+
+        self.refresh()
+
+    def fmt(self, ms):
+        s = ms // 1000
+        return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+
+    def refresh(self):
+        self.table.setRowCount(0)
+        for bm in self.parent.resume_db.get('__bookmarks__', []):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(Path(bm['file']).name[:30]))
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(self.fmt(bm['pos'])))
+            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(bm.get('note', '')))
+
+    def add_bookmark(self):
+        if not self.parent.current_file:
+            return
+        note, _ = QtWidgets.QInputDialog.getText(self, "Note", "Bookmark note:")
+        bm = {'file': self.parent.current_file, 'pos': self.parent.player.get_time(), 'note': note}
+        self.parent.resume_db.setdefault('__bookmarks__', []).append(bm)
+        save_resume(self.parent.resume_db)
+        self.refresh()
+
+    def load_selected_from_button(self):
+        rows = {i.row() for i in self.table.selectedItems()}
+        if rows:
+            self.load_bookmark(min(rows))
+
+    def load_selected(self, item):
+        self.load_bookmark(item.row())
+
+    def load_bookmark(self, row):
+        bms = self.parent.resume_db.get('__bookmarks__', [])
+        if row >= len(bms):
+            return
+        bm = bms[row]
+        if Path(bm['file']).exists():
+            self.parent.prev_time = self.parent.player.get_time()
+            self.parent.load_media(Path(bm['file']))
+            self.parent.player.set_time(bm['pos'])
+            self.parent.resume_db['__last_book__'] = bm['file']
+            save_resume(self.parent.resume_db)
+
+    def delete_selected(self):
+        rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
+        bms = self.parent.resume_db.get('__bookmarks__', [])
+        for r in rows:
+            if r < len(bms):
+                bms.pop(r)
+        save_resume(self.parent.resume_db)
+        self.refresh()
+
 class Player(QtWidgets.QMainWindow):
     def __init__(self, vlc_inst, probe_cmd):
         super().__init__()
         self.vlc_inst, self.probe_cmd = vlc_inst, probe_cmd
         self.setWindowTitle("📚 Offline m4b Player")
-        ico = Path(__file__).with_suffix('.ico')
-        if ico.exists():
-            self.setWindowIcon(QtGui.QIcon(str(ico)))
+        ico_path = find_icon()
+        if ico_path:
+            icon = QtGui.QIcon(str(ico_path))
+        else:
+            icon = self.style().standardIcon(QtWidgets.QStyle.SP_FileIcon)
+        self.setWindowIcon(icon)
         self.setGeometry(100, 100, 900, 650)
 
+        # ensure the media player object exists
+        self.player = self.vlc_inst.media_player_new()
+
         self.resume_db = load_resume()
+        self.resume_db.setdefault('__bookmarks__', [])
         self.current_file = None
         self.chapters = []
         self.audio_tracks = []
         self.tts = pyttsx3.init()
+        self.prev_time = 0
+        self.play_btn = None
 
         self._build_ui()
         self._apply_font_sizes()
         self._refresh_shelf()
+        self._create_tray()
+        self._load_last_book()
 
         self.ui_timer = QtCore.QTimer(self)
         self.ui_timer.timeout.connect(self._update_ui)
@@ -119,8 +227,10 @@ class Player(QtWidgets.QMainWindow):
         for text, func in [("▶", self.play_pause),
                            ("« 10s", lambda: self.skip(-10000)),
                            ("10s »", lambda: self.skip(10000)),
-                           ("Next Chapter", self.next_chapter)]:
+                           ("Bookmarks", self.open_bookmarks)]:
             btn = QtWidgets.QPushButton(text)
+            if text == "▶":
+                self.play_btn = btn
             btn.clicked.connect(func)
             cb.addWidget(btn)
         v.addLayout(cb)
@@ -128,6 +238,7 @@ class Player(QtWidgets.QMainWindow):
         # Time slider
         self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.slider.setObjectName("timeSlider")
+        self.slider.setRange(0, 1)
         self.slider.sliderMoved.connect(self.seek)
         v.addWidget(self.slider)
 
@@ -142,6 +253,8 @@ class Player(QtWidgets.QMainWindow):
         go.clicked.connect(self.on_time_edit)
         th.addWidget(go)
         v.addLayout(th)
+        self.continue_lbl = QtWidgets.QLabel("Continue From: 00:00:00")
+        v.addWidget(self.continue_lbl)
 
         # Volume slider
         vh = QtWidgets.QHBoxLayout()
@@ -175,6 +288,7 @@ class Player(QtWidgets.QMainWindow):
         # Metadata dropdown
         self.meta_box = QtWidgets.QGroupBox("Show Metadata ▶")
         self.meta_box.setCheckable(True)
+        self.meta_box.setChecked(False)
         self.meta_box.toggled.connect(self._toggle_meta)
         mv = QtWidgets.QVBoxLayout(self.meta_box)
         self.meta_tree = QtWidgets.QTreeWidget()
@@ -201,28 +315,41 @@ class Player(QtWidgets.QMainWindow):
             self.load_media(Path(f))
 
     def load_media(self, path: Path):
+        if hasattr(self, 'player') and self.player is not None:
+            try:
+                self.player.stop()
+            except Exception:
+                pass
         self.current_file = str(path)
         m = self.vlc_inst.media_new(self.current_file)
         self.player = self.vlc_inst.media_player_new()
         self.player.set_media(m)
         # preload & volume
-        self.player.play(); QtCore.QThread.msleep(100); self.player.pause()
+        self.player.play(); QtCore.QThread.msleep(200); self.player.pause()
         self.player.audio_set_volume(self.resume_db.get('volume', 100))
+        length = self.player.get_length()
+        self.slider.setRange(0, length or 1)
 
         self._load_metadata(path)
-        self._load_chapters(path)
-        self._load_audio_streams()
+        if hasattr(self, '_load_chapters'):
+            self._load_chapters(path)
+        if hasattr(self, '_load_audio_streams'):
+            self._load_audio_streams()
 
         pos = self.resume_db.get(self.current_file, 0)
         self.player.set_time(pos)
+        self.continue_lbl.setText(f"Continue From: {pos//3600000:02d}:{(pos//60000)%60:02d}:{(pos//1000)%60:02d}")
         self.meta_lbl.setText(f"<b>{path.name}</b>")
+
+        self.resume_db['__last_book__'] = self.current_file
 
         shelf = self.resume_db['__bookshelf__']
         if self.current_file not in shelf:
             shelf.append(self.current_file)
         save_resume(self.resume_db)
         self._refresh_shelf()
-        self.play_pause_button().setText("▶")
+        if self.play_btn:
+            self.play_btn.setText("▶")
 
     def _load_metadata(self, path: Path):
         self.meta_tree.clear()
@@ -281,10 +408,14 @@ class Player(QtWidgets.QMainWindow):
 
     def _load_audio_streams(self):
         self.audio_tracks.clear()
+        self.stream_combo.blockSignals(True)
         self.stream_combo.clear()
+        self.stream_combo.blockSignals(False)
         descs = self.player.audio_get_track_description()
         if not descs:
+            QtCore.QTimer.singleShot(300, self._load_audio_streams)
             return
+        self.stream_combo.blockSignals(True)
         for t in descs:
             tid, raw = (t if isinstance(t, tuple) else (t.id, t.name))
             if tid < 0:
@@ -292,6 +423,7 @@ class Player(QtWidgets.QMainWindow):
             name = raw if isinstance(raw, str) else raw.decode('utf-8', errors='ignore')
             self.audio_tracks.append((tid, name))
             self.stream_combo.addItem(name)
+        self.stream_combo.blockSignals(False)
         cur = self.player.audio_get_track()
         if cur < 0 and self.audio_tracks:
             self.player.audio_set_track(self.audio_tracks[0][0])
@@ -303,11 +435,9 @@ class Player(QtWidgets.QMainWindow):
                     break
 
     def _change_audio_stream(self, idx):
-        try:
+        if 0 <= idx < len(self.audio_tracks):
             tid, _ = self.audio_tracks[idx]
             self.player.audio_set_track(tid)
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Audio Stream Error", str(e))
 
     def on_time_edit(self):
         parts = self.time_edit.text().split(':')
@@ -318,7 +448,8 @@ class Player(QtWidgets.QMainWindow):
                 self.player.set_time(ms)
                 length = self.player.get_length()
                 if length > 0:
-                    self.slider.setValue(int(ms/length * 1000))
+                    self.slider.setRange(0, length)
+                    self.slider.setValue(ms)
             except:
                 pass
 
@@ -345,6 +476,9 @@ class Player(QtWidgets.QMainWindow):
         save_resume(self.resume_db)
 
     def play_pause(self):
+        if not self.current_file:
+            QtWidgets.QMessageBox.information(self, "No Book Loaded", "Please open an audio book first.")
+            return
         if self.player.is_playing():
             self.player.pause()
             self.play_btn.setText("▶")
@@ -369,19 +503,20 @@ class Player(QtWidgets.QMainWindow):
 
     def seek(self, pos):
         if self.current_file:
-            self.player.set_position(pos/1000)
+            self.player.set_time(pos)
 
     def _update_ui(self):
         if not self.current_file:
             return
         self.slider.blockSignals(True)
-        self.slider.setValue(int(self.player.get_position() * 1000))
+        ms = self.player.get_time()
+        self.slider.setValue(ms)
         self.slider.blockSignals(False)
         if self.player.is_playing() and not self.time_edit.hasFocus():
-            ms = self.player.get_time()
             s = ms // 1000
             self.time_edit.setText(f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}")
         self.resume_db[self.current_file] = self.player.get_time()
+        self.continue_lbl.setText(f"Continue From: {ms//3600000:02d}:{(ms//60000)%60:02d}:{(ms//1000)%60:02d}")
         save_resume(self.resume_db)
 
     def _toggle_meta(self, show):
@@ -400,6 +535,45 @@ class Player(QtWidgets.QMainWindow):
 
     def _open_from_shelf(self, item):
         self.load_media(Path(item.data(QtCore.Qt.UserRole)))
+
+    def _create_tray(self):
+        ico_path = find_icon()
+        if ico_path:
+            icon = QtGui.QIcon(str(ico_path))
+        else:
+            icon = self.windowIcon()
+        self.tray = QtWidgets.QSystemTrayIcon(icon, self)
+        menu = QtWidgets.QMenu()
+        show = menu.addAction("Show")
+        quit_act = menu.addAction("Quit")
+        show.triggered.connect(self.show_normal_from_tray)
+        quit_act.triggered.connect(QtWidgets.qApp.quit)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(lambda r: self.show_normal_from_tray() if r == QtWidgets.QSystemTrayIcon.Trigger else None)
+        self.tray.show()
+
+    def show_normal_from_tray(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def changeEvent(self, e):
+        if e.type() == QtCore.QEvent.WindowStateChange and self.isMinimized():
+            QtCore.QTimer.singleShot(0, self.hide)
+        super().changeEvent(e)
+
+    def _load_last_book(self):
+        last = self.resume_db.get('__last_book__')
+        if last:
+            p = Path(last)
+            if p.exists():
+                self.load_media(p)
+            else:
+                QtWidgets.QMessageBox.information(self, "Missing Book", "Last book not found. Please open a file.")
+
+    def open_bookmarks(self):
+        dlg = BookmarkDialog(self)
+        dlg.exec_()
 
     def open_settings(self):
         dlg = QtWidgets.QDialog(self)
@@ -448,6 +622,7 @@ class Player(QtWidgets.QMainWindow):
     def closeEvent(self, e):
         if self.current_file:
             self.resume_db[self.current_file] = self.player.get_time()
+            self.resume_db['__last_book__'] = self.current_file
             save_resume(self.resume_db)
         super().closeEvent(e)
 
@@ -461,7 +636,7 @@ if __name__ == '__main__':
         QLabel, QListWidget, QPushButton, QGroupBox, QTreeWidget { background-color: #2d2d2d; color: white; }
         QDialog, QTextEdit, QSpinBox, QLineEdit { background-color: #222222; color: white; }
         QListWidget::item:selected { background-color: #555555; }
-        QPushButton { border: none; padding: 5px; }
+        QPushButton { background-color: #3b3b3b; border: 1px solid #777; padding: 5px; border-radius: 3px; }
         QPushButton:hover { background-color: #555555; }
         QGroupBox::title { subcontrol-origin: margin; left: 7px; padding: 0 3px; }
     """)
