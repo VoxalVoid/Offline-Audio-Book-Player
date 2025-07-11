@@ -1,10 +1,5 @@
 # Offline Audio Book Player
-
-A lightweight PyQt5 application for listening to audio books without an internet connection. It is written in a single Python file and relies on VLC for playback.
-The program runs entirely offline and focuses on `.m4b` books but can open several common audio formats.
-Playback history and bookmarks are stored under `~/.config/m4bplayer` (or `%USERPROFILE%\.config\m4bplayer` on Windows).
-=======
-A lightweight PyQt5 application for listening to audio books without an internet connection. It is written in a single Python file and relies on VLC for playback. The player focuses on `.m4b` books but can open several common audio formats.
+A lightweight PyQt5 application for listening to audio books without an internet connection. It is written in a single Python file and relies on VLC for playback. The program runs entirely offline and focuses on `.m4b` books but can open several common audio formats. Playback history and bookmarks are stored under `~/.config/m4bplayer` (or `%USERPROFILE%\.config\m4bplayer` on Windows).
 
 ## Features
 
@@ -63,6 +58,7 @@ python m4b_playerV6.py
 ```
 
 On first start, the player creates a `resume.dat` file inside the `~/.config/m4bplayer` folder (or `%USERPROFILE%\.config\m4bplayer` on Windows) to store progress, bookshelf entries and UI preferences. If VLC or ffprobe cannot be located automatically, you will be prompted to select their locations.
+
 =======
 ## Usage
 
@@ -89,6 +85,7 @@ Other formats supported by VLC may also work when chosen via the "All Files" opt
 ## Configuration files
 
 User data is stored in `~/.config/m4bplayer/resume.dat` on Linux and macOS or `%USERPROFILE%\.config\m4bplayer\resume.dat` on Windows. This file is base64‑encoded JSON and is created automatically. You can wipe or inspect it from the **Settings** dialog inside the application.
+
 =======
 User data is stored in `~/.config/m4bplayer/resume.dat`. This file is base64‑encoded JSON and is created automatically. You can wipe or inspect it from the **Settings** dialog inside the application.
 
