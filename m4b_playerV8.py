@@ -284,7 +284,11 @@ class VisualizerWidget(QtWidgets.QWidget):
         self.plot = pg.PlotWidget(background="#222")
         self.plot.setYRange(-1, 1)
         layout.addWidget(self.plot, 1)
-        self.curve = self.plot.plot()
+        self.line = self.plot.plot(pen='m')
+        self.bar_item = pg.BarGraphItem(x=[], height=[], width=0.8, brush='y')
+        self.plot.addItem(self.bar_item)
+        self.bar_item.hide()
+        self.curve = self.line  # backward compat
         self.res_label = QtWidgets.QLabel()
         layout.addWidget(self.res_label)
 
@@ -316,32 +320,37 @@ class VisualizerWidget(QtWidgets.QWidget):
         self.data.append(level)
         arr = np.array(self.data)
         if self.mode == 0:
-            self.curve.setData(arr)
+            x = np.arange(len(arr))
+            self.line.setData(x, arr)
         elif self.mode == 1:
-            x = np.linspace(-1, 1, len(arr))
-            self.curve.setData(x, arr)
+            x = np.arange(len(arr))
+            self.bar_item.setOpts(x=x, height=arr)
         else:
             theta = np.linspace(0, 2*np.pi, len(arr), endpoint=False)
             r = 0.5 + arr
             x = r * np.cos(theta)
             y = r * np.sin(theta)
-            self.curve.setData(x, y)
+            self.line.setData(x, y)
 
     def set_mode(self, idx):
         self.mode = idx
         if pg is None or np is None:
             return
         if self.mode == 0:
-            self.curve.setPen('m')
-            self.curve.setSymbol(None)
+            self.bar_item.hide()
+            self.line.show()
+            self.line.setPen('m')
+            self.line.setSymbol(None)
         elif self.mode == 1:
-            self.curve.setPen('y')
-            self.curve.setSymbol(None)
+            self.line.hide()
+            self.bar_item.show()
         else:
-            self.curve.setPen(None)
-            self.curve.setSymbol('o')
-            self.curve.setSymbolSize(5)
-            self.curve.setSymbolBrush('c')
+            self.bar_item.hide()
+            self.line.show()
+            self.line.setPen(None)
+            self.line.setSymbol('o')
+            self.line.setSymbolSize(5)
+            self.line.setSymbolBrush('c')
 
     def closeEvent(self, e):
         super().closeEvent(e)
