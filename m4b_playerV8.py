@@ -2,6 +2,7 @@
 import sys, os, json, base64, subprocess
 from pathlib import Path
 import shutil
+import math
 from mutagen.mp4 import MP4
 from mutagen import File as AFile
 import vlc
@@ -278,7 +279,9 @@ class VisualizerWidget(QtWidgets.QWidget):
             bar_h = val * h
             x = i * w / self.bar_count
             rect = QtCore.QRectF(x, h - bar_h, w / self.bar_count - 2, bar_h)
-            qp.fillRect(rect, QtGui.QColor(120, 160, 255))
+            c = 50 + int(180 * val)
+            color = QtGui.QColor(c, c, 255)
+            qp.fillRect(rect, color)
 
     def _draw_wave(self, qp, start, w, h):
         path = QtGui.QPainterPath()
@@ -292,7 +295,9 @@ class VisualizerWidget(QtWidgets.QWidget):
                 path.moveTo(x, y)
             else:
                 path.lineTo(x, y)
-        qp.setPen(QtGui.QPen(QtGui.QColor(180, 220, 255), 2))
+        avg = sum(self.levels[start:start+self.bar_count]) / self.bar_count if self.bar_count else 0
+        c = 50 + int(180 * avg)
+        qp.setPen(QtGui.QPen(QtGui.QColor(c, 220, 255), 2))
         qp.drawPath(path)
 
     def _draw_radial(self, qp, start, w, h):
@@ -303,28 +308,33 @@ class VisualizerWidget(QtWidgets.QWidget):
             j = start + i
             val = self.levels[j] if j < len(self.levels) else 0
             l = r * val
-            x1 = center.x() + (r - l) * QtCore.qCos(angle)
-            y1 = center.y() + (r - l) * QtCore.qSin(angle)
-            x2 = center.x() + r * QtCore.qCos(angle)
-            y2 = center.y() + r * QtCore.qSin(angle)
-            qp.setPen(QtGui.QPen(QtGui.QColor(255, 200, 120), 2))
+            x1 = center.x() + (r - l) * math.cos(angle)
+            y1 = center.y() + (r - l) * math.sin(angle)
+            x2 = center.x() + r * math.cos(angle)
+            y2 = center.y() + r * math.sin(angle)
+            c = 150 + int(105 * val)
+            color = QtGui.QColor(255, c, 120)
+            qp.setPen(QtGui.QPen(color, 2))
             qp.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
 
     def paintEvent(self, e):
         qp = QtGui.QPainter(self)
-        qp.fillRect(self.rect(), QtGui.QColor("#111"))
-        if not self.levels or not self.player:
-            return
-        pos = self.player.get_time()
-        idx = int(pos / self.chunk_ms)
-        start = max(0, idx - self.bar_count)
-        w, h = self.width(), self.height()
-        if self.mode == 0:
-            self._draw_bars(qp, start, w, h)
-        elif self.mode == 1:
-            self._draw_radial(qp, start, w, h)
-        else:
-            self._draw_wave(qp, start, w, h)
+        try:
+            qp.fillRect(self.rect(), QtGui.QColor("#111"))
+            if not self.levels or not self.player:
+                return
+            pos = self.player.get_time()
+            idx = int(pos / self.chunk_ms)
+            start = max(0, idx - self.bar_count)
+            w, h = self.width(), self.height()
+            if self.mode == 0:
+                self._draw_bars(qp, start, w, h)
+            elif self.mode == 1:
+                self._draw_radial(qp, start, w, h)
+            else:
+                self._draw_wave(qp, start, w, h)
+        finally:
+            qp.end()
 
 
 class VisualizerWindow(QtWidgets.QDialog):
