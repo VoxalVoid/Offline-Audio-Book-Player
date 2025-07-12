@@ -226,42 +226,46 @@ class GalleryDialog(QtWidgets.QDialog):
         super().resizeEvent(e)
 
 
-class LevelLoader(QtCore.QThread):
-    """Load audio levels in the background using ffmpeg."""
+class VisualizerThread(QtCore.QThread):
+    """Decode audio on the fly and emit level data."""
 
-    finished = QtCore.pyqtSignal(list)
+    level = QtCore.pyqtSignal(float)
 
-    def __init__(self, path: Path, interval_ms: int = 100):
+    def __init__(self, path: Path, start_ms: int = 0, interval_ms: int = 100):
         super().__init__()
         self.path = path
+        self.start_ms = start_ms
         self.interval_ms = interval_ms
+        self._running = True
+
+    def stop(self):
+        self._running = False
 
     def run(self):
         ff = shutil.which("ffmpeg")
         if not ff or not self.path:
             return
-        cmd = [ff, "-i", str(self.path), "-f", "s16le", "-ac", "1",
+        pos = str(self.start_ms / 1000.0)
+        cmd = [ff, "-ss", pos, "-i", str(self.path), "-f", "s16le", "-ac", "1",
                "-ar", "8000", "-loglevel", "quiet", "-"]
         try:
-            import audioop
+            import audioop, time
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-            buf = int(8000 * (self.interval_ms/1000.0) * 2)  # 8kHz mono 16bit
-            levels = []
-            while True:
+            buf = int(8000 * (self.interval_ms/1000.0) * 2)
+            while self._running:
                 data = proc.stdout.read(buf)
                 if not data:
                     break
                 rms = audioop.rms(data, 2) / 32768.0
-                levels.append(rms)
+                self.level.emit(rms)
             proc.stdout.close()
             proc.wait()
-            self.finished.emit(levels)
         except Exception:
             pass
 
 
 class VisualizerWidget(QtWidgets.QWidget):
-    """Display audio levels using precomputed data."""
+    """Display audio levels fed from a background thread."""
 
     def __init__(self, player, interval_ms=100):
         super().__init__()
@@ -269,6 +273,7 @@ class VisualizerWidget(QtWidgets.QWidget):
         self.interval_ms = interval_ms
         self.mode = 0
         self.data = collections.deque([0]*200, maxlen=200)
+        self.current_level = 0.0
 
         layout = QtWidgets.QVBoxLayout(self)
         if pg is None or np is None:
@@ -297,6 +302,11 @@ class VisualizerWidget(QtWidgets.QWidget):
         self.timer.start(self.interval_ms)
         self.set_mode(self.mode)
 
+    @QtCore.pyqtSlot(float)
+    def add_level(self, level: float):
+        """Receive a new audio level from the worker thread."""
+        self.current_level = max(-1.0, min(1.0, level))
+
     def _update_stats(self):
         if psutil:
             p = psutil.Process()
@@ -308,16 +318,7 @@ class VisualizerWidget(QtWidgets.QWidget):
         self._update_stats()
         if pg is None or np is None:
             return
-        if self.player.levels:
-            ms = self.player.player.get_time()
-            idx = int(ms / self.interval_ms)
-            if 0 <= idx < len(self.player.levels):
-                level = self.player.levels[idx]
-            else:
-                level = 0.0
-        else:
-            level = 0.0
-        self.data.append(level)
+        self.data.append(self.current_level)
         arr = np.array(self.data)
         if self.mode == 0:
             x = np.arange(len(arr))
@@ -353,6 +354,8 @@ class VisualizerWidget(QtWidgets.QWidget):
             self.line.setSymbolBrush('c')
 
     def closeEvent(self, e):
+        if hasattr(self.player, '_stop_vis_thread'):
+            self.player._stop_vis_thread()
         super().closeEvent(e)
 
 
@@ -369,6 +372,11 @@ class VisualizerWindow(QtWidgets.QDialog):
         self.mode_combo.currentIndexChanged.connect(self.widget.set_mode)
         layout.addWidget(self.mode_combo)
         self.resize(500, 500)
+
+    def closeEvent(self, e):
+        if hasattr(self.player, '_stop_vis_thread'):
+            self.player._stop_vis_thread()
+        super().closeEvent(e)
 
 class Player(QtWidgets.QMainWindow):
     def __init__(self, vlc_inst, probe_cmd):
@@ -396,8 +404,7 @@ class Player(QtWidgets.QMainWindow):
         self.play_btn = None
         self.images = []
         self.vis_win = None
-        self.levels = []
-        self.loader = None
+        self.vis_thread = None
 
         self._build_ui()
         self._apply_font_sizes()
@@ -549,13 +556,10 @@ class Player(QtWidgets.QMainWindow):
         # preload & volume
         self.player.play(); QtCore.QThread.msleep(200); self.player.pause()
         self.player.audio_set_volume(self.resume_db.get('volume', 100))
-        self.levels = []
-        if self.loader:
-            self.loader.terminate()
-            self.loader.wait()
-        self.loader = LevelLoader(path)
-        self.loader.finished.connect(lambda lv: setattr(self, 'levels', lv))
-        self.loader.start()
+        if self.vis_thread:
+            self.vis_thread.stop()
+            self.vis_thread.wait()
+            self.vis_thread = None
         if self.vis_win:
             self.vis_win.widget.setParent(None)
             self.vis_win.widget = VisualizerWidget(self)
@@ -566,6 +570,7 @@ class Player(QtWidgets.QMainWindow):
                 pass
             self.vis_win.mode_combo.currentIndexChanged.connect(self.vis_win.widget.set_mode)
             self.vis_win.widget.set_mode(self.vis_win.mode_combo.currentIndex())
+            self._start_vis_thread()
         length = self.player.get_length()
         self.slider.setRange(0, length or 1)
 
@@ -727,14 +732,18 @@ class Player(QtWidgets.QMainWindow):
         if self.player.is_playing():
             self.player.pause()
             self.play_btn.setText("▶")
+            self._stop_vis_thread()
         else:
             self.player.play()
             self.play_btn.setText("❚❚")
+            self._start_vis_thread()
 
     def skip(self, msec):
         if self.current_file:
             t = self.player.get_time() + msec
             self.player.set_time(max(0, t))
+            if self.player.is_playing():
+                self._start_vis_thread()
 
     def next_chapter(self):
         now = self.player.get_time()
@@ -745,10 +754,14 @@ class Player(QtWidgets.QMainWindow):
 
     def goto_chapter(self, item):
         self.player.set_time(item.data(QtCore.Qt.UserRole))
+        if self.player.is_playing():
+            self._start_vis_thread()
 
     def seek(self, pos):
         if self.current_file:
             self.player.set_time(pos)
+            if self.player.is_playing():
+                self._start_vis_thread()
 
     def _update_ui(self):
         if not self.current_file:
@@ -844,6 +857,25 @@ class Player(QtWidgets.QMainWindow):
             self.vis_win.widget.set_mode(self.vis_win.mode_combo.currentIndex())
         self.vis_win.show()
         self.vis_win.raise_()
+        self._start_vis_thread()
+
+    def _start_vis_thread(self):
+        if self.vis_win is None or pg is None or np is None:
+            return
+        if not self.current_file:
+            return
+        if self.vis_thread:
+            self.vis_thread.stop()
+            self.vis_thread.wait()
+        self.vis_thread = VisualizerThread(Path(self.current_file), self.player.get_time())
+        self.vis_thread.level.connect(self.vis_win.widget.add_level)
+        self.vis_thread.start()
+
+    def _stop_vis_thread(self):
+        if self.vis_thread:
+            self.vis_thread.stop()
+            self.vis_thread.wait()
+            self.vis_thread = None
 
     def open_settings(self):
         dlg = QtWidgets.QDialog(self)
@@ -894,6 +926,7 @@ class Player(QtWidgets.QMainWindow):
             self.resume_db[self.current_file] = self.player.get_time()
             self.resume_db['__last_book__'] = self.current_file
             save_resume(self.resume_db)
+        self._stop_vis_thread()
         super().closeEvent(e)
 
 if __name__ == '__main__':

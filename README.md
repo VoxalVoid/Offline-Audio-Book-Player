@@ -14,7 +14,7 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - Compact mode keeps a small window visible when minimized
 - Slider adjusts to long books and shows a "Continue From" label
 - Automatically reopens the last book when the program starts
-- Optional real-time audio visualizer with CPU/RAM stats (requires `pyqtgraph`, `numpy`, `pyaudio` and `ffmpeg`; stats shown when `psutil` is installed)
+- Optional real-time audio visualizer driven by ffmpeg with CPU/RAM stats (requires `pyqtgraph`, `numpy`, `pyaudio` and `ffmpeg`; stats shown when `psutil` is installed)
 
 ## Requirements
 
@@ -61,7 +61,7 @@ python m4b_playerV8.py
 
 On first start, the player creates `~/.config/m4bplayer/resume.dat` to store progress, bookshelf entries and UI preferences. If VLC, ffprobe or ffmpeg cannot be located automatically, you will be prompted to select their locations.
 
-Click **Visualizer** in the toolbar to open the optional real-time visualizer window. Use the drop-down in that window to switch between **Wave**, **Bars** and **Circle** modes. The widget shows CPU and RAM usage when `psutil` is present.
+Click **Visualizer** in the toolbar to open the optional real-time visualizer window. The widget decodes the audio with ffmpeg so the patterns react live to the book. Use the drop-down to choose **Wave**, **Bars** or **Circle**. CPU and RAM usage are displayed when `psutil` is installed.
 
 ## Supported formats
 
