@@ -3,10 +3,30 @@ import sys, os, json, base64, subprocess
 from pathlib import Path
 import shutil
 import math
+import collections
 try:
     import psutil  # optional resource monitoring
 except ImportError:  # pragma: no cover - optional dependency
     psutil = None
+missing_libs = []
+try:
+    import pyqtgraph as pg
+except ImportError:  # pragma: no cover - optional dependency
+    pg = None
+    missing_libs.append('pyqtgraph')
+try:
+    import numpy as np  # required by pyqtgraph
+except ImportError:  # pragma: no cover - optional dependency
+    np = None
+    missing_libs.append('numpy')
+try:
+    import pyaudio
+except ImportError:  # pragma: no cover - optional dependency
+    pyaudio = None
+    missing_libs.append('pyaudio')
+if missing_libs:
+    print('Missing packages:', ' '.join(missing_libs))
+    print('Install them with: pip install ' + ' '.join(missing_libs))
 from mutagen.mp4 import MP4
 from mutagen import File as AFile
 import vlc
@@ -206,181 +226,109 @@ class GalleryDialog(QtWidgets.QDialog):
         super().resizeEvent(e)
 
 
-class LevelLoader(QtCore.QThread):
-    """Background worker to compute audio levels.
+class VisualizerThread(QtCore.QThread):
+    """Decode audio in real-time and emit level data."""
+    level_ready = QtCore.pyqtSignal(float)
 
-    The original implementation decoded the entire book at the native
-    sample rate which could take a very long time for multi hour files.
-    To keep the UI responsive we down‑sample the audio to 8kHz and only
-    store one RMS value every 0.5 seconds.  This drastically reduces the
-    amount of data we have to process while still giving the visualizer
-    enough information to animate smoothly.
-    """
-    levels_ready = QtCore.pyqtSignal(list, int)
-
-    def __init__(self, path: Path, probe_cmd: str):
+    def __init__(self, path: Path):
         super().__init__()
         self.path = path
-        self.probe_cmd = probe_cmd
+        self.running = True
 
     def run(self):
-        levels = []
-        chunk_ms = 1
         ff = shutil.which("ffmpeg")
-        if not ff:
-            self.levels_ready.emit(levels, chunk_ms)
+        if not ff or not self.path:
             return
-        # Downsample to 8kHz mono for quick processing
-        rate = 8000
-        buf = 8000  # 0.5 seconds worth of 16‑bit samples
+        cmd = [ff, "-i", str(self.path), "-f", "s16le", "-ac", "1",
+               "-ar", "8000", "-loglevel", "quiet", "-"]
         try:
-            proc = subprocess.Popen([
-                ff, "-i", str(self.path), "-f", "s16le", "-ac", "1",
-                "-ar", str(rate), "-loglevel", "quiet", "-"
-            ], stdout=subprocess.PIPE)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
             import audioop
-            while True:
+            buf = 1024
+            while self.running:
                 data = proc.stdout.read(buf)
                 if not data:
                     break
                 rms = audioop.rms(data, 2) / 32768.0
-                levels.append(rms)
+                self.level_ready.emit(rms)
+            proc.stdout.close()
             proc.wait()
-            chunk_ms = (buf/2)/rate*1000
         except Exception:
-            levels = []
-            chunk_ms = 1
-        self.levels_ready.emit(levels, chunk_ms)
+            pass
+
+    def stop(self):
+        self.running = False
+        self.wait()
 
 
 class VisualizerWidget(QtWidgets.QWidget):
-    """Simple audio visualizer with multiple drawing modes."""
-    def __init__(self, player, levels, chunk_ms):
+    """Real-time audio visualizer using pyqtgraph."""
+    def __init__(self, path: Path):
         super().__init__()
-        self.player = player
-        self.levels = levels
-        self.chunk_ms = chunk_ms or 1
-        self.bar_count = 64
+        self.path = path
         self.mode = 0
+        layout = QtWidgets.QVBoxLayout(self)
+        if pg is None or np is None:
+            txt = QtWidgets.QLabel("Install pyqtgraph numpy pyaudio for visualizers")
+            layout.addWidget(txt)
+            self.thread = None
+            self.data = collections.deque([0]*200, maxlen=200)
+            return
+        self.plot = pg.PlotWidget()
+        self.plot.setYRange(-1, 1)
+        layout.addWidget(self.plot, 1)
+        self.curve = self.plot.plot(pen='c')
+        self.data = collections.deque([0]*200, maxlen=200)
+        self.thread = VisualizerThread(path)
+        self.thread.level_ready.connect(self._add_level)
+        self.thread.start()
         self.timer = QtCore.QTimer(self)
-        self.timer.timeout.connect(self.update)
-        self.update_interval = 100  # ms
-        self.timer.start(self.update_interval)
-        self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
+        self.timer.timeout.connect(self._update_plot)
+        self.timer.start(50)
 
-    def set_levels(self, levels, chunk_ms):
-        self.levels = levels
-        self.chunk_ms = chunk_ms or 1
+    def _add_level(self, level):
+        self.data.append(level)
 
-    def set_update_interval(self, ms):
-        self.update_interval = max(50, min(1000, int(ms)))
-        self.timer.start(self.update_interval)
+    def _update_plot(self):
+        if pg is None or np is None:
+            return
+        arr = np.array(self.data)
+        self.plot.clear()
+        if self.mode == 0:
+            self.curve = self.plot.plot(arr, pen='m')
+        elif self.mode == 1:
+            x = np.linspace(-1, 1, len(arr))
+            y = arr
+            self.curve = self.plot.plot(x, y, pen='y')
+        else:
+            theta = np.linspace(0, 2*np.pi, len(arr), endpoint=False)
+            r = 0.5 + arr
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            self.plot.plot(x, y, pen=None, symbol='o', symbolSize=5, symbolBrush='c')
 
-    def set_mode(self, mode):
-        self.mode = mode
-        self.update()
+    def set_mode(self, idx):
+        self.mode = idx
 
-    def _draw_bars(self, qp, start, w, h):
-        for i in range(self.bar_count):
-            j = start + i
-            val = self.levels[j] if j < len(self.levels) else 0
-            bar_h = val * h
-            x = i * w / self.bar_count
-            rect = QtCore.QRectF(x, h - bar_h, w / self.bar_count - 2, bar_h)
-            c = 50 + int(180 * val)
-            color = QtGui.QColor(c, c, 255)
-            qp.fillRect(rect, color)
-
-    def _draw_wave(self, qp, start, w, h):
-        path = QtGui.QPainterPath()
-        step = w / self.bar_count
-        for i in range(self.bar_count):
-            j = start + i
-            val = self.levels[j] if j < len(self.levels) else 0
-            x = i * step
-            y = h/2 - val * h/2
-            if i == 0:
-                path.moveTo(x, y)
-            else:
-                path.lineTo(x, y)
-        avg = sum(self.levels[start:start+self.bar_count]) / self.bar_count if self.bar_count else 0
-        c = 50 + int(180 * avg)
-        qp.setPen(QtGui.QPen(QtGui.QColor(c, 220, 255), 2))
-        qp.drawPath(path)
-
-    def _draw_radial(self, qp, start, w, h):
-        r = min(w, h) / 2 - 10
-        center = QtCore.QPointF(w/2, h/2)
-        for i in range(self.bar_count):
-            angle = 2 * 3.14159 * i / self.bar_count
-            j = start + i
-            val = self.levels[j] if j < len(self.levels) else 0
-            l = r * val
-            x1 = center.x() + (r - l) * math.cos(angle)
-            y1 = center.y() + (r - l) * math.sin(angle)
-            x2 = center.x() + r * math.cos(angle)
-            y2 = center.y() + r * math.sin(angle)
-            c = 150 + int(105 * val)
-            color = QtGui.QColor(255, c, 120)
-            qp.setPen(QtGui.QPen(color, 2))
-            qp.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
-
-    def paintEvent(self, e):
-        qp = QtGui.QPainter(self)
-        try:
-            qp.fillRect(self.rect(), QtGui.QColor("#111"))
-            if not self.levels or not self.player:
-                qp.setPen(QtGui.QPen(QtGui.QColor('#bbb')))
-                msg = "Loading audio data…" if self.levels is None else "No visualizer data"
-                qp.drawText(self.rect(), QtCore.Qt.AlignCenter, msg)
-                return
-            pos = self.player.get_time()
-            idx = int(pos / self.chunk_ms)
-            start = max(0, idx - self.bar_count)
-            w, h = self.width(), self.height()
-            if self.mode == 0:
-                self._draw_bars(qp, start, w, h)
-            elif self.mode == 1:
-                self._draw_radial(qp, start, w, h)
-            else:
-                self._draw_wave(qp, start, w, h)
-        finally:
-            qp.end()
+    def closeEvent(self, e):
+        if self.thread:
+            self.thread.stop()
+        super().closeEvent(e)
 
 
 class VisualizerWindow(QtWidgets.QDialog):
-    def __init__(self, player, levels, chunk_ms):
+    def __init__(self, player):
         super().__init__()
+        self.player = player
         self.setWindowTitle("Visualizer")
         layout = QtWidgets.QVBoxLayout(self)
-        self.widget = VisualizerWidget(player, levels, chunk_ms)
+        self.widget = VisualizerWidget(Path(player.current_file) if player.current_file else None)
         layout.addWidget(self.widget, 1)
-        self.info_lbl = QtWidgets.QLabel()
-        layout.addWidget(self.info_lbl)
         self.mode_combo = QtWidgets.QComboBox()
-        self.mode_combo.addItems(["Bars", "Radial", "Wave"])
+        self.mode_combo.addItems(["Bars", "Wave", "Circle"])
         self.mode_combo.currentIndexChanged.connect(self.widget.set_mode)
         layout.addWidget(self.mode_combo)
-        sp = QtWidgets.QSpinBox()
-        sp.setRange(50, 1000)
-        sp.setValue(100)
-        sp.setSuffix(" ms refresh")
-        sp.valueChanged.connect(self.widget.set_update_interval)
-        layout.addWidget(sp)
         self.resize(500, 500)
-        self.info_timer = QtCore.QTimer(self)
-        self.info_timer.timeout.connect(self._update_info)
-        self.info_timer.start(1000)
-
-    def _update_info(self):
-        if psutil:
-            p = psutil.Process(os.getpid())
-            mem = p.memory_info().rss / (1024*1024)
-            cpu = p.cpu_percent(interval=None)
-            thr = p.num_threads()
-            self.info_lbl.setText(f"CPU {cpu:.0f}%  RAM {mem:.1f} MB  Threads {thr}")
-        else:
-            self.info_lbl.setText("Install psutil for usage stats")
 
 class Player(QtWidgets.QMainWindow):
     def __init__(self, vlc_inst, probe_cmd):
@@ -407,8 +355,6 @@ class Player(QtWidgets.QMainWindow):
         self.prev_time = 0
         self.play_btn = None
         self.images = []
-        self.levels = None
-        self.chunk_ms = 1
         self.vis_win = None
 
         self._build_ui()
@@ -562,10 +508,11 @@ class Player(QtWidgets.QMainWindow):
         self.player.play(); QtCore.QThread.msleep(200); self.player.pause()
         self.player.audio_set_volume(self.resume_db.get('volume', 100))
         if self.vis_win:
-            self.vis_win.widget.player = self.player
+            self.vis_win.widget.thread.stop()
+            self.vis_win.widget = VisualizerWidget(path)
+            self.vis_win.layout().insertWidget(0, self.vis_win.widget, 1)
         length = self.player.get_length()
         self.slider.setRange(0, length or 1)
-        self._start_level_loader(path)
 
         self._load_metadata(path)
         if hasattr(self, '_load_chapters'):
@@ -613,53 +560,6 @@ class Player(QtWidgets.QMainWindow):
         except:
             pass
 
-    def _load_levels(self, path: Path):
-        """Precompute audio levels for visualization."""
-        self.levels = None
-        self.chunk_ms = 1
-        ff = shutil.which("ffmpeg")
-        if not ff:
-            return
-        rate = 44100
-        if self.probe_cmd:
-            try:
-                out = subprocess.check_output([self.probe_cmd, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate", "-of", "default=nw=1:nk=1", str(path)])
-                rate = int(out.strip() or 44100)
-            except Exception:
-                pass
-        buf = 2048
-        try:
-            proc = subprocess.Popen([ff, "-i", str(path), "-f", "s16le", "-ac", "1", "-loglevel", "quiet", "-"], stdout=subprocess.PIPE)
-            import audioop
-            while True:
-                data = proc.stdout.read(buf)
-                if not data:
-                    break
-                rms = audioop.rms(data, 2) / 32768.0
-                self.levels.append(rms)
-            proc.wait()
-            self.chunk_ms = (buf/2)/rate*1000
-        except Exception:
-            self.levels = []
-            self.chunk_ms = 1
-
-    def _start_level_loader(self, path: Path):
-        if getattr(self, 'level_thread', None):
-            try:
-                self.level_thread.levels_ready.disconnect()
-            except Exception:
-                pass
-            self.level_thread.quit()
-            self.level_thread.wait()
-        self.level_thread = LevelLoader(path, self.probe_cmd)
-        self.level_thread.levels_ready.connect(self._levels_ready)
-        self.level_thread.start()
-
-    def _levels_ready(self, levels, chunk_ms):
-        self.levels = levels
-        self.chunk_ms = chunk_ms
-        if self.vis_win:
-            self.vis_win.widget.set_levels(levels, chunk_ms)
 
     def _show_meta_full(self, item, _):
         key, val = item.text(0), item.text(1)
@@ -876,10 +776,11 @@ class Player(QtWidgets.QMainWindow):
 
     def open_visualizer(self):
         if self.vis_win is None:
-            self.vis_win = VisualizerWindow(self.player, self.levels, self.chunk_ms)
+            self.vis_win = VisualizerWindow(self)
         else:
-            self.vis_win.widget.player = self.player
-            self.vis_win.widget.set_levels(self.levels, self.chunk_ms)
+            self.vis_win.widget.thread.stop()
+            self.vis_win.widget = VisualizerWidget(Path(self.current_file) if self.current_file else None)
+            self.vis_win.layout().insertWidget(0, self.vis_win.widget, 1)
         self.vis_win.show()
         self.vis_win.raise_()
 

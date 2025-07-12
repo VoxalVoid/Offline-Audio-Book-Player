@@ -14,8 +14,7 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - Compact mode keeps a small window visible when minimized
 - Slider adjusts to long books and shows a "Continue From" label
 - Automatically reopens the last book when the program starts
-- Optional audio visualizer (requires ffmpeg; shows resource usage if `psutil` is installed)
-- Adjustable visualizer refresh interval (50‑1000 ms)
+- Optional real-time audio visualizer (requires `pyqtgraph`, `numpy`, `pyaudio` and `ffmpeg`; shows resource usage if `psutil` is installed)
 
 ## Requirements
 
@@ -24,12 +23,13 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - [`ffprobe`](https://ffmpeg.org/ffprobe.html) for reading chapter information
 - [`ffmpeg`](https://ffmpeg.org/) for the visualizer feature
 - [`psutil`](https://pypi.org/project/psutil/) *(optional, for usage stats)*
+- `pyqtgraph`, `numpy`, `pyaudio` *(optional, for real-time visualizer)*
 - Python packages: `mutagen`, `python-vlc`, `PyQt5`, `pyttsx3`
 
 Install the Python dependencies with:
 
 ```bash
-pip install mutagen python-vlc PyQt5 pyttsx3 psutil  # psutil optional
+pip install mutagen python-vlc PyQt5 pyttsx3 psutil pyqtgraph numpy pyaudio  # optional: psutil and visualizer libs
 ```
 
 ## Windows 11 Setup
@@ -40,7 +40,7 @@ pip install mutagen python-vlc PyQt5 pyttsx3 psutil  # psutil optional
 4. Open **PowerShell** or **Command Prompt** and run:
 
 ```powershell
-pip install mutagen python-vlc PyQt5 pyttsx3 psutil  # psutil optional
+pip install mutagen python-vlc PyQt5 pyttsx3 psutil pyqtgraph numpy pyaudio  # optional: psutil and visualizer libs
 ```
 
 Run the application from the same terminal with:
@@ -61,7 +61,7 @@ python m4b_playerV8.py
 
 On first start, the player creates `~/.config/m4bplayer/resume.dat` to store progress, bookshelf entries and UI preferences. If VLC, ffprobe or ffmpeg cannot be located automatically, you will be prompted to select their locations.
 
-Click **Visualizer** in the toolbar to open the optional visualizer window. Use the provided spin box to adjust how often the animation refreshes (50‑1000&nbsp;ms).
+Click **Visualizer** in the toolbar to open the optional real-time visualizer window. The widget renders waveforms synced with playback.
 
 ## Supported formats
 
