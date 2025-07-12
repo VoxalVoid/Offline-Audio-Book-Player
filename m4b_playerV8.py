@@ -201,21 +201,114 @@ class GalleryDialog(QtWidgets.QDialog):
         super().resizeEvent(e)
 
 
+class LevelLoader(QtCore.QThread):
+    """Background worker to compute audio levels."""
+    levels_ready = QtCore.pyqtSignal(list, int)
+
+    def __init__(self, path: Path, probe_cmd: str):
+        super().__init__()
+        self.path = path
+        self.probe_cmd = probe_cmd
+
+    def run(self):
+        levels = []
+        chunk_ms = 1
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            self.levels_ready.emit(levels, chunk_ms)
+            return
+        rate = 44100
+        if self.probe_cmd:
+            try:
+                out = subprocess.check_output([
+                    self.probe_cmd, "-v", "error", "-select_streams", "a:0",
+                    "-show_entries", "stream=sample_rate",
+                    "-of", "default=nw=1:nk=1", str(self.path)
+                ])
+                rate = int(out.strip() or 44100)
+            except Exception:
+                pass
+        buf = 2048
+        try:
+            proc = subprocess.Popen([
+                ff, "-i", str(self.path), "-f", "s16le", "-ac", "1",
+                "-loglevel", "quiet", "-"
+            ], stdout=subprocess.PIPE)
+            import audioop
+            while True:
+                data = proc.stdout.read(buf)
+                if not data:
+                    break
+                rms = audioop.rms(data, 2) / 32768.0
+                levels.append(rms)
+            proc.wait()
+            chunk_ms = (buf/2)/rate*1000
+        except Exception:
+            levels = []
+            chunk_ms = 1
+        self.levels_ready.emit(levels, chunk_ms)
+
+
 class VisualizerWidget(QtWidgets.QWidget):
-    """Audio waveform visualizer using precomputed levels."""
+    """Simple audio visualizer with multiple drawing modes."""
     def __init__(self, player, levels, chunk_ms):
         super().__init__()
         self.player = player
         self.levels = levels
         self.chunk_ms = chunk_ms or 1
         self.bar_count = 64
+        self.mode = 0
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update)
-        self.timer.start(30)
+        self.timer.start(16)
+        self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
 
     def set_levels(self, levels, chunk_ms):
         self.levels = levels
         self.chunk_ms = chunk_ms or 1
+
+    def set_mode(self, mode):
+        self.mode = mode
+        self.update()
+
+    def _draw_bars(self, qp, start, w, h):
+        for i in range(self.bar_count):
+            j = start + i
+            val = self.levels[j] if j < len(self.levels) else 0
+            bar_h = val * h
+            x = i * w / self.bar_count
+            rect = QtCore.QRectF(x, h - bar_h, w / self.bar_count - 2, bar_h)
+            qp.fillRect(rect, QtGui.QColor(120, 160, 255))
+
+    def _draw_wave(self, qp, start, w, h):
+        path = QtGui.QPainterPath()
+        step = w / self.bar_count
+        for i in range(self.bar_count):
+            j = start + i
+            val = self.levels[j] if j < len(self.levels) else 0
+            x = i * step
+            y = h/2 - val * h/2
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        qp.setPen(QtGui.QPen(QtGui.QColor(180, 220, 255), 2))
+        qp.drawPath(path)
+
+    def _draw_radial(self, qp, start, w, h):
+        r = min(w, h) / 2 - 10
+        center = QtCore.QPointF(w/2, h/2)
+        for i in range(self.bar_count):
+            angle = 2 * 3.14159 * i / self.bar_count
+            j = start + i
+            val = self.levels[j] if j < len(self.levels) else 0
+            l = r * val
+            x1 = center.x() + (r - l) * QtCore.qCos(angle)
+            y1 = center.y() + (r - l) * QtCore.qSin(angle)
+            x2 = center.x() + r * QtCore.qCos(angle)
+            y2 = center.y() + r * QtCore.qSin(angle)
+            qp.setPen(QtGui.QPen(QtGui.QColor(255, 200, 120), 2))
+            qp.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
 
     def paintEvent(self, e):
         qp = QtGui.QPainter(self)
@@ -226,13 +319,12 @@ class VisualizerWidget(QtWidgets.QWidget):
         idx = int(pos / self.chunk_ms)
         start = max(0, idx - self.bar_count)
         w, h = self.width(), self.height()
-        for i in range(self.bar_count):
-            j = start + i
-            val = self.levels[j] if j < len(self.levels) else 0
-            bar_h = val * h
-            x = i * w / self.bar_count
-            rect = QtCore.QRectF(x, h - bar_h, w / self.bar_count - 2, bar_h)
-            qp.fillRect(rect, QtGui.QColor(120,160,255))
+        if self.mode == 0:
+            self._draw_bars(qp, start, w, h)
+        elif self.mode == 1:
+            self._draw_radial(qp, start, w, h)
+        else:
+            self._draw_wave(qp, start, w, h)
 
 
 class VisualizerWindow(QtWidgets.QDialog):
@@ -241,7 +333,12 @@ class VisualizerWindow(QtWidgets.QDialog):
         self.setWindowTitle("Visualizer")
         layout = QtWidgets.QVBoxLayout(self)
         self.widget = VisualizerWidget(player, levels, chunk_ms)
-        layout.addWidget(self.widget)
+        layout.addWidget(self.widget, 1)
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItems(["Bars", "Radial", "Wave"])
+        self.mode_combo.currentIndexChanged.connect(self.widget.set_mode)
+        layout.addWidget(self.mode_combo)
+        self.resize(500, 500)
 
 class Player(QtWidgets.QMainWindow):
     def __init__(self, vlc_inst, probe_cmd):
@@ -426,7 +523,7 @@ class Player(QtWidgets.QMainWindow):
             self.vis_win.widget.player = self.player
         length = self.player.get_length()
         self.slider.setRange(0, length or 1)
-        self._load_levels(path)
+        self._start_level_loader(path)
 
         self._load_metadata(path)
         if hasattr(self, '_load_chapters'):
@@ -503,6 +600,24 @@ class Player(QtWidgets.QMainWindow):
         except Exception:
             self.levels = []
             self.chunk_ms = 1
+
+    def _start_level_loader(self, path: Path):
+        if getattr(self, 'level_thread', None):
+            try:
+                self.level_thread.levels_ready.disconnect()
+            except Exception:
+                pass
+            self.level_thread.quit()
+            self.level_thread.wait()
+        self.level_thread = LevelLoader(path, self.probe_cmd)
+        self.level_thread.levels_ready.connect(self._levels_ready)
+        self.level_thread.start()
+
+    def _levels_ready(self, levels, chunk_ms):
+        self.levels = levels
+        self.chunk_ms = chunk_ms
+        if self.vis_win:
+            self.vis_win.widget.set_levels(levels, chunk_ms)
 
     def _show_meta_full(self, item, _):
         key, val = item.text(0), item.text(1)
