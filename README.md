@@ -15,6 +15,7 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - Slider adjusts to long books and shows a "Continue From" label
 - Automatically reopens the last book when the program starts
 - Optional audio visualizer (requires ffmpeg; shows resource usage if `psutil` is installed)
+- Adjustable visualizer refresh interval (50‑1000 ms)
 
 ## Requirements
 
@@ -59,6 +60,8 @@ python m4b_playerV8.py
 ```
 
 On first start, the player creates `~/.config/m4bplayer/resume.dat` to store progress, bookshelf entries and UI preferences. If VLC, ffprobe or ffmpeg cannot be located automatically, you will be prompted to select their locations.
+
+Click **Visualizer** in the toolbar to open the optional visualizer window. Use the provided spin box to adjust how often the animation refreshes (50‑1000&nbsp;ms).
 
 ## Supported formats
 

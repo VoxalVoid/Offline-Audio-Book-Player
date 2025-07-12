@@ -207,7 +207,15 @@ class GalleryDialog(QtWidgets.QDialog):
 
 
 class LevelLoader(QtCore.QThread):
-    """Background worker to compute audio levels."""
+    """Background worker to compute audio levels.
+
+    The original implementation decoded the entire book at the native
+    sample rate which could take a very long time for multi hour files.
+    To keep the UI responsive we down‑sample the audio to 8kHz and only
+    store one RMS value every 0.5 seconds.  This drastically reduces the
+    amount of data we have to process while still giving the visualizer
+    enough information to animate smoothly.
+    """
     levels_ready = QtCore.pyqtSignal(list, int)
 
     def __init__(self, path: Path, probe_cmd: str):
@@ -222,22 +230,13 @@ class LevelLoader(QtCore.QThread):
         if not ff:
             self.levels_ready.emit(levels, chunk_ms)
             return
-        rate = 44100
-        if self.probe_cmd:
-            try:
-                out = subprocess.check_output([
-                    self.probe_cmd, "-v", "error", "-select_streams", "a:0",
-                    "-show_entries", "stream=sample_rate",
-                    "-of", "default=nw=1:nk=1", str(self.path)
-                ])
-                rate = int(out.strip() or 44100)
-            except Exception:
-                pass
-        buf = 2048
+        # Downsample to 8kHz mono for quick processing
+        rate = 8000
+        buf = 8000  # 0.5 seconds worth of 16‑bit samples
         try:
             proc = subprocess.Popen([
                 ff, "-i", str(self.path), "-f", "s16le", "-ac", "1",
-                "-loglevel", "quiet", "-"
+                "-ar", str(rate), "-loglevel", "quiet", "-"
             ], stdout=subprocess.PIPE)
             import audioop
             while True:
@@ -265,12 +264,17 @@ class VisualizerWidget(QtWidgets.QWidget):
         self.mode = 0
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update)
-        self.timer.start(16)
+        self.update_interval = 100  # ms
+        self.timer.start(self.update_interval)
         self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
 
     def set_levels(self, levels, chunk_ms):
         self.levels = levels
         self.chunk_ms = chunk_ms or 1
+
+    def set_update_interval(self, ms):
+        self.update_interval = max(50, min(1000, int(ms)))
+        self.timer.start(self.update_interval)
 
     def set_mode(self, mode):
         self.mode = mode
@@ -357,6 +361,12 @@ class VisualizerWindow(QtWidgets.QDialog):
         self.mode_combo.addItems(["Bars", "Radial", "Wave"])
         self.mode_combo.currentIndexChanged.connect(self.widget.set_mode)
         layout.addWidget(self.mode_combo)
+        sp = QtWidgets.QSpinBox()
+        sp.setRange(50, 1000)
+        sp.setValue(100)
+        sp.setSuffix(" ms refresh")
+        sp.valueChanged.connect(self.widget.set_update_interval)
+        layout.addWidget(sp)
         self.resize(500, 500)
         self.info_timer = QtCore.QTimer(self)
         self.info_timer.timeout.connect(self._update_info)
