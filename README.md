@@ -14,7 +14,7 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - Compact mode keeps a small window visible when minimized
 - Slider adjusts to long books and shows a "Continue From" label
 - Automatically reopens the last book when the program starts
-- Optional audio visualizer (requires ffmpeg)
+- Optional audio visualizer (requires ffmpeg; shows resource usage if `psutil` is installed)
 
 ## Requirements
 
@@ -22,12 +22,13 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - [VLC](https://www.videolan.org/) so the `libvlc` libraries are discoverable
 - [`ffprobe`](https://ffmpeg.org/ffprobe.html) for reading chapter information
 - [`ffmpeg`](https://ffmpeg.org/) for the visualizer feature
+- [`psutil`](https://pypi.org/project/psutil/) *(optional, for usage stats)*
 - Python packages: `mutagen`, `python-vlc`, `PyQt5`, `pyttsx3`
 
 Install the Python dependencies with:
 
 ```bash
-pip install mutagen python-vlc PyQt5 pyttsx3
+pip install mutagen python-vlc PyQt5 pyttsx3 psutil  # psutil optional
 ```
 
 ## Windows 11 Setup
@@ -38,7 +39,7 @@ pip install mutagen python-vlc PyQt5 pyttsx3
 4. Open **PowerShell** or **Command Prompt** and run:
 
 ```powershell
-pip install mutagen python-vlc PyQt5 pyttsx3
+pip install mutagen python-vlc PyQt5 pyttsx3 psutil  # psutil optional
 ```
 
 Run the application from the same terminal with:

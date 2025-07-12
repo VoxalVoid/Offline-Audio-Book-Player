@@ -3,6 +3,10 @@ import sys, os, json, base64, subprocess
 from pathlib import Path
 import shutil
 import math
+try:
+    import psutil  # optional resource monitoring
+except ImportError:  # pragma: no cover - optional dependency
+    psutil = None
 from mutagen.mp4 import MP4
 from mutagen import File as AFile
 import vlc
@@ -322,6 +326,9 @@ class VisualizerWidget(QtWidgets.QWidget):
         try:
             qp.fillRect(self.rect(), QtGui.QColor("#111"))
             if not self.levels or not self.player:
+                qp.setPen(QtGui.QPen(QtGui.QColor('#bbb')))
+                msg = "Loading audio data…" if self.levels is None else "No visualizer data"
+                qp.drawText(self.rect(), QtCore.Qt.AlignCenter, msg)
                 return
             pos = self.player.get_time()
             idx = int(pos / self.chunk_ms)
@@ -344,11 +351,26 @@ class VisualizerWindow(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         self.widget = VisualizerWidget(player, levels, chunk_ms)
         layout.addWidget(self.widget, 1)
+        self.info_lbl = QtWidgets.QLabel()
+        layout.addWidget(self.info_lbl)
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItems(["Bars", "Radial", "Wave"])
         self.mode_combo.currentIndexChanged.connect(self.widget.set_mode)
         layout.addWidget(self.mode_combo)
         self.resize(500, 500)
+        self.info_timer = QtCore.QTimer(self)
+        self.info_timer.timeout.connect(self._update_info)
+        self.info_timer.start(1000)
+
+    def _update_info(self):
+        if psutil:
+            p = psutil.Process(os.getpid())
+            mem = p.memory_info().rss / (1024*1024)
+            cpu = p.cpu_percent(interval=None)
+            thr = p.num_threads()
+            self.info_lbl.setText(f"CPU {cpu:.0f}%  RAM {mem:.1f} MB  Threads {thr}")
+        else:
+            self.info_lbl.setText("Install psutil for usage stats")
 
 class Player(QtWidgets.QMainWindow):
     def __init__(self, vlc_inst, probe_cmd):
@@ -375,7 +397,7 @@ class Player(QtWidgets.QMainWindow):
         self.prev_time = 0
         self.play_btn = None
         self.images = []
-        self.levels = []
+        self.levels = None
         self.chunk_ms = 1
         self.vis_win = None
 
@@ -583,7 +605,7 @@ class Player(QtWidgets.QMainWindow):
 
     def _load_levels(self, path: Path):
         """Precompute audio levels for visualization."""
-        self.levels = []
+        self.levels = None
         self.chunk_ms = 1
         ff = shutil.which("ffmpeg")
         if not ff:
