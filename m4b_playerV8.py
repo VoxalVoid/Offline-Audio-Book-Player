@@ -284,13 +284,14 @@ class VisualizerWidget(QtWidgets.QWidget):
         self.plot = pg.PlotWidget(background="#222")
         self.plot.setYRange(-1, 1)
         layout.addWidget(self.plot, 1)
-        self.curve = self.plot.plot(pen='m')
+        self.curve = self.plot.plot()
         self.res_label = QtWidgets.QLabel()
         layout.addWidget(self.res_label)
 
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._update_plot)
         self.timer.start(self.interval_ms)
+        self.set_mode(self.mode)
 
     def _update_stats(self):
         if psutil:
@@ -314,21 +315,33 @@ class VisualizerWidget(QtWidgets.QWidget):
             level = 0.0
         self.data.append(level)
         arr = np.array(self.data)
-        self.plot.clear()
         if self.mode == 0:
-            self.curve = self.plot.plot(arr, pen='m')
+            self.curve.setData(arr)
         elif self.mode == 1:
             x = np.linspace(-1, 1, len(arr))
-            self.curve = self.plot.plot(x, arr, pen='y')
+            self.curve.setData(x, arr)
         else:
             theta = np.linspace(0, 2*np.pi, len(arr), endpoint=False)
             r = 0.5 + arr
             x = r * np.cos(theta)
             y = r * np.sin(theta)
-            self.plot.plot(x, y, pen=None, symbol='o', symbolSize=5, symbolBrush='c')
+            self.curve.setData(x, y)
 
     def set_mode(self, idx):
         self.mode = idx
+        if pg is None or np is None:
+            return
+        if self.mode == 0:
+            self.curve.setPen('m')
+            self.curve.setSymbol(None)
+        elif self.mode == 1:
+            self.curve.setPen('y')
+            self.curve.setSymbol(None)
+        else:
+            self.curve.setPen(None)
+            self.curve.setSymbol('o')
+            self.curve.setSymbolSize(5)
+            self.curve.setSymbolBrush('c')
 
     def closeEvent(self, e):
         super().closeEvent(e)
@@ -538,6 +551,12 @@ class Player(QtWidgets.QMainWindow):
             self.vis_win.widget.setParent(None)
             self.vis_win.widget = VisualizerWidget(self)
             self.vis_win.layout().insertWidget(0, self.vis_win.widget, 1)
+            try:
+                self.vis_win.mode_combo.currentIndexChanged.disconnect()
+            except TypeError:
+                pass
+            self.vis_win.mode_combo.currentIndexChanged.connect(self.vis_win.widget.set_mode)
+            self.vis_win.widget.set_mode(self.vis_win.mode_combo.currentIndex())
         length = self.player.get_length()
         self.slider.setRange(0, length or 1)
 
@@ -808,6 +827,12 @@ class Player(QtWidgets.QMainWindow):
             self.vis_win.widget.setParent(None)
             self.vis_win.widget = VisualizerWidget(self)
             self.vis_win.layout().insertWidget(0, self.vis_win.widget, 1)
+            try:
+                self.vis_win.mode_combo.currentIndexChanged.disconnect()
+            except TypeError:
+                pass
+            self.vis_win.mode_combo.currentIndexChanged.connect(self.vis_win.widget.set_mode)
+            self.vis_win.widget.set_mode(self.vis_win.mode_combo.currentIndex())
         self.vis_win.show()
         self.vis_win.raise_()
 

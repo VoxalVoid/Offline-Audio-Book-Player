@@ -61,7 +61,7 @@ python m4b_playerV8.py
 
 On first start, the player creates `~/.config/m4bplayer/resume.dat` to store progress, bookshelf entries and UI preferences. If VLC, ffprobe or ffmpeg cannot be located automatically, you will be prompted to select their locations.
 
-Click **Visualizer** in the toolbar to open the optional real-time visualizer window. The widget renders waveforms synced with playback and shows resource usage when `psutil` is present.
+Click **Visualizer** in the toolbar to open the optional real-time visualizer window. Use the drop-down in that window to switch between **Wave**, **Bars** and **Circle** modes. The widget shows CPU and RAM usage when `psutil` is present.
 
 ## Supported formats
 
