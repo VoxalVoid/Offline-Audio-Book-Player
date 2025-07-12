@@ -44,7 +44,7 @@ pip install mutagen python-vlc PyQt5 pyttsx3
 Run the application from the same terminal with:
 
 ```powershell
-python m4b_playerV6.py
+python m4b_playerV8.py
 ```
 
 The configuration file will be created under `%USERPROFILE%\.config\m4bplayer\resume.dat`.
@@ -54,7 +54,7 @@ The configuration file will be created under `%USERPROFILE%\.config\m4bplayer\re
 Run the application with Python. On most Linux or macOS systems the command is `python3`, while on Windows you typically use `python`:
 
 ```bash
-python m4b_playerV6.py
+python m4b_playerV8.py
 ```
 
 On first start, the player creates a `resume.dat` file inside the `~/.config/m4bplayer` folder (or `%USERPROFILE%\.config\m4bplayer` on Windows) to store progress, bookshelf entries and UI preferences. If VLC or ffprobe cannot be located automatically, you will be prompted to select their locations.
@@ -65,7 +65,7 @@ On first start, the player creates a `resume.dat` file inside the `~/.config/m4b
 Run the application with Python:
 
 ```bash
-python3 m4b_playerV5.py
+python3 m4b_playerV8.py
 ```
 
 On first start, the player creates `~/.config/m4bplayer/resume.dat` to store progress, bookshelf entries and UI preferences. If VLC or ffprobe cannot be located automatically, you will be prompted to select their locations.
