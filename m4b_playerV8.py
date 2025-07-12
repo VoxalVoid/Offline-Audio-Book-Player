@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys, os, json, base64, subprocess
 from pathlib import Path
+import shutil
 from mutagen.mp4 import MP4
 from mutagen import File as AFile
 import vlc
@@ -201,73 +202,46 @@ class GalleryDialog(QtWidgets.QDialog):
 
 
 class VisualizerWidget(QtWidgets.QWidget):
-    """Simple animated audio visualizer."""
-    def __init__(self, player):
+    """Audio waveform visualizer using precomputed levels."""
+    def __init__(self, player, levels, chunk_ms):
         super().__init__()
         self.player = player
-        self.mode = 0
-        self.phase = 0.0
+        self.levels = levels
+        self.chunk_ms = chunk_ms or 1
+        self.bar_count = 64
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.update)
         self.timer.start(30)
 
-    def set_mode(self, idx):
-        self.mode = idx
+    def set_levels(self, levels, chunk_ms):
+        self.levels = levels
+        self.chunk_ms = chunk_ms or 1
 
     def paintEvent(self, e):
         qp = QtGui.QPainter(self)
-        qp.fillRect(self.rect(), QtCore.Qt.black)
-        if not self.player.is_playing():
+        qp.fillRect(self.rect(), QtGui.QColor("#111"))
+        if not self.levels or not self.player:
             return
+        pos = self.player.get_time()
+        idx = int(pos / self.chunk_ms)
+        start = max(0, idx - self.bar_count)
         w, h = self.width(), self.height()
-        vol = max(self.player.audio_get_volume() / 100.0, 0.1)
-        if self.mode == 0:
-            bars = 20
-            for i in range(bars):
-                import math
-                val = (math.sin(self.phase + i*0.5) * 0.5 + 0.5) * vol
-                bar_h = val * h
-                rect = QtCore.QRectF(i*w/bars, h-bar_h, w/bars-2, bar_h)
-                color = QtGui.QColor.fromHsv((i*18)%360, 255, 200)
-                qp.fillRect(rect, color)
-        elif self.mode == 1:
-            import math
-            r = min(w, h)/3 * vol + 10
-            qp.setPen(QtGui.QPen(QtGui.QColor("cyan"), 2))
-            pts = []
-            for i in range(360):
-                ang = math.radians(i)
-                rad = r + math.sin(self.phase + ang*6)*r*0.3
-                pts.append(QtCore.QPointF(w/2 + math.cos(ang)*rad,
-                                          h/2 + math.sin(ang)*rad))
-            qp.drawPolyline(QtGui.QPolygonF(pts))
-        else:
-            import random
-            qp.setPen(QtGui.QPen(QtGui.QColor("yellow"), 1))
-            for _ in range(60):
-                x1 = random.randint(0, w)
-                x2 = random.randint(0, w)
-                y1 = random.randint(0, h)
-                y2 = random.randint(0, h)
-                qp.drawLine(x1, y1, x2, y2)
-        self.phase += 0.1
+        for i in range(self.bar_count):
+            j = start + i
+            val = self.levels[j] if j < len(self.levels) else 0
+            bar_h = val * h
+            x = i * w / self.bar_count
+            rect = QtCore.QRectF(x, h - bar_h, w / self.bar_count - 2, bar_h)
+            qp.fillRect(rect, QtGui.QColor(120,160,255))
 
 
 class VisualizerWindow(QtWidgets.QDialog):
-    def __init__(self, player):
+    def __init__(self, player, levels, chunk_ms):
         super().__init__()
         self.setWindowTitle("Visualizer")
         layout = QtWidgets.QVBoxLayout(self)
-        self.widget = VisualizerWidget(player)
+        self.widget = VisualizerWidget(player, levels, chunk_ms)
         layout.addWidget(self.widget)
-        hl = QtWidgets.QHBoxLayout()
-        hl.addWidget(QtWidgets.QLabel("Style:"))
-        self.combo = QtWidgets.QComboBox()
-        self.combo.addItems(["Bars", "Circle", "Lines"])
-        self.combo.currentIndexChanged.connect(self.widget.set_mode)
-        hl.addWidget(self.combo)
-        hl.addStretch(1)
-        layout.addLayout(hl)
 
 class Player(QtWidgets.QMainWindow):
     def __init__(self, vlc_inst, probe_cmd):
@@ -294,6 +268,8 @@ class Player(QtWidgets.QMainWindow):
         self.prev_time = 0
         self.play_btn = None
         self.images = []
+        self.levels = []
+        self.chunk_ms = 1
         self.vis_win = None
 
         self._build_ui()
@@ -450,6 +426,7 @@ class Player(QtWidgets.QMainWindow):
             self.vis_win.widget.player = self.player
         length = self.player.get_length()
         self.slider.setRange(0, length or 1)
+        self._load_levels(path)
 
         self._load_metadata(path)
         if hasattr(self, '_load_chapters'):
@@ -496,6 +473,36 @@ class Player(QtWidgets.QMainWindow):
                 QtWidgets.QTreeWidgetItem(self.meta_tree, [k, text])
         except:
             pass
+
+    def _load_levels(self, path: Path):
+        """Precompute audio levels for visualization."""
+        self.levels = []
+        self.chunk_ms = 1
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            return
+        rate = 44100
+        if self.probe_cmd:
+            try:
+                out = subprocess.check_output([self.probe_cmd, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate", "-of", "default=nw=1:nk=1", str(path)])
+                rate = int(out.strip() or 44100)
+            except Exception:
+                pass
+        buf = 2048
+        try:
+            proc = subprocess.Popen([ff, "-i", str(path), "-f", "s16le", "-ac", "1", "-loglevel", "quiet", "-"], stdout=subprocess.PIPE)
+            import audioop
+            while True:
+                data = proc.stdout.read(buf)
+                if not data:
+                    break
+                rms = audioop.rms(data, 2) / 32768.0
+                self.levels.append(rms)
+            proc.wait()
+            self.chunk_ms = (buf/2)/rate*1000
+        except Exception:
+            self.levels = []
+            self.chunk_ms = 1
 
     def _show_meta_full(self, item, _):
         key, val = item.text(0), item.text(1)
@@ -712,9 +719,10 @@ class Player(QtWidgets.QMainWindow):
 
     def open_visualizer(self):
         if self.vis_win is None:
-            self.vis_win = VisualizerWindow(self.player)
+            self.vis_win = VisualizerWindow(self.player, self.levels, self.chunk_ms)
         else:
             self.vis_win.widget.player = self.player
+            self.vis_win.widget.set_levels(self.levels, self.chunk_ms)
         self.vis_win.show()
         self.vis_win.raise_()
 

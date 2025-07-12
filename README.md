@@ -13,6 +13,7 @@ A lightweight PyQt5 application for listening to audio books without an internet
 - Compact mode keeps a small window visible when you try to minimize
 - Slider adjusts to long books and shows a "Continue From" label
 - Automatically reopens the last book when the program starts
+- Optional audio visualizer (requires ffmpeg)
 =======
 
 ## Requirements
@@ -20,6 +21,7 @@ A lightweight PyQt5 application for listening to audio books without an internet
 - Python 3.7 or newer
 - [VLC](https://www.videolan.org/) installed so that the `libvlc` libraries are discoverable
 - [`ffprobe`](https://ffmpeg.org/ffprobe.html) (part of FFmpeg) for reading chapter information
+- [`ffmpeg`](https://ffmpeg.org/) for audio visualization features
 - Python packages: `mutagen`, `python-vlc`, `PyQt5`, `pyttsx3`
 
 Install the Python dependencies with:
