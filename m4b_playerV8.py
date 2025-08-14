@@ -183,14 +183,14 @@ class BookmarkDialog(QtWidgets.QDialog):
 
 # --- Extra UI Elements ----------------------------------------------------
 
-    class ClickableLabel(QtWidgets.QLabel):
-        """QLabel emitting a clicked signal when pressed."""
-        clicked = QtCore.pyqtSignal()
+class ClickableLabel(QtWidgets.QLabel):
+    """QLabel emitting a clicked signal when pressed."""
+    clicked = QtCore.pyqtSignal()
 
-        def mousePressEvent(self, e):
-            if e.button() == QtCore.Qt.MouseButton.LeftButton:
-                self.clicked.emit()
-            super().mousePressEvent(e)
+    def mousePressEvent(self, e):
+        if e.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(e)
 
 
 class GalleryDialog(QtWidgets.QDialog):
