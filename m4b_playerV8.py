@@ -30,7 +30,7 @@ if missing_libs:
 from mutagen.mp4 import MP4
 from mutagen import File as AFile
 import vlc
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 import pyttsx3  # for text-to-speech
 
 # --- CONFIG & UTILITIES ---
@@ -71,16 +71,15 @@ def find_vlc():
     try:
         return vlc.Instance('--no-video')
     except:
-        from PyQt5.QtWidgets import QFileDialog, QMessageBox
-        QMessageBox.warning(None, "VLC Not Found",
+        QtWidgets.QMessageBox.warning(None, "VLC Not Found",
             "Could not locate VLC libraries. Please select your VLC installation folder.")
-        folder = QFileDialog.getExistingDirectory(None, "Select VLC install folder")
+        folder = QtWidgets.QFileDialog.getExistingDirectory(None, "Select VLC install folder")
         if folder:
             os.environ['PATH'] += os.pathsep + folder
             try:
                 return vlc.Instance('--no-video')
             except:
-                QMessageBox.critical(None, "Error", "Failed to initialize VLC. Exiting.")
+                QtWidgets.QMessageBox.critical(None, "Error", "Failed to initialize VLC. Exiting.")
         sys.exit(1)
 
 def find_ffprobe():
@@ -89,10 +88,9 @@ def find_ffprobe():
         subprocess.run([cmd, '-version'], capture_output=True, check=True)
         return cmd
     except:
-        from PyQt5.QtWidgets import QFileDialog, QMessageBox
-        QMessageBox.warning(None, "ffprobe Not Found",
+        QtWidgets.QMessageBox.warning(None, "ffprobe Not Found",
             "ffprobe not found. Chapter support will be disabled.")
-        path, _ = QFileDialog.getOpenFileName(None, "Locate ffprobe.exe", "", "Executable (*.exe)")
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(None, "Locate ffprobe.exe", "", "Executable (*.exe)")
         return path or None
 
 def find_icon():
@@ -190,7 +188,7 @@ class ClickableLabel(QtWidgets.QLabel):
     clicked = QtCore.pyqtSignal()
 
     def mousePressEvent(self, e):
-        if e.button() == QtCore.Qt.LeftButton:
+        if e.button() == QtCore.Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(e)
 
@@ -208,7 +206,7 @@ class GalleryDialog(QtWidgets.QDialog):
         self.labels = []
         for img in images:
             lbl = QtWidgets.QLabel()
-            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            lbl.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             lbl.orig = QtGui.QPixmap.fromImage(img)
             lbl.setPixmap(lbl.orig)
             self.vbox.addWidget(lbl)
@@ -220,8 +218,8 @@ class GalleryDialog(QtWidgets.QDialog):
         for lbl in self.labels:
             if not lbl.orig.isNull():
                 pix = lbl.orig.scaled(self.width()-40, self.height()-40,
-                                       QtCore.Qt.KeepAspectRatio,
-                                       QtCore.Qt.SmoothTransformation)
+                                       QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                                       QtCore.Qt.TransformationMode.SmoothTransformation)
                 lbl.setPixmap(pix)
         super().resizeEvent(e)
 
@@ -465,7 +463,7 @@ class Player(QtWidgets.QMainWindow):
         v.addLayout(cb)
 
         # Time slider
-        self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.slider.setObjectName("timeSlider")
         self.slider.setRange(0, 1)
         self.slider.sliderMoved.connect(self.seek)
@@ -488,7 +486,7 @@ class Player(QtWidgets.QMainWindow):
         # Volume slider
         vh = QtWidgets.QHBoxLayout()
         vh.addWidget(QtWidgets.QLabel("Volume:"))
-        self.vol_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.vol_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.vol_slider.setObjectName("volumeSlider")
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(self.resume_db.get('volume', 100))
@@ -610,7 +608,7 @@ class Player(QtWidgets.QMainWindow):
                     if not qimg.isNull():
                         self.images.append(qimg)
                 if self.images:
-                    pix = QtGui.QPixmap.fromImage(self.images[0]).scaled(100, 100, QtCore.Qt.KeepAspectRatio)
+                    pix = QtGui.QPixmap.fromImage(self.images[0]).scaled(100, 100, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
                     self.cover_lbl.setPixmap(pix)
             for k, v in tags.items():
                 text = str(v)
@@ -634,7 +632,7 @@ class Player(QtWidgets.QMainWindow):
             btn.clicked.connect(lambda: self.tts.say(txt.toPlainText()) or self.tts.runAndWait())
             ly.addWidget(btn)
         dlg.resize(400, 300)
-        dlg.exec_()
+        dlg.exec()
 
     def _load_chapters(self, path: Path):
         self.chapters.clear()
@@ -650,7 +648,7 @@ class Player(QtWidgets.QMainWindow):
                 ms = int(float(c['start_time']) * 1000)
                 title = c.get('tags', {}).get('title', f"Chapter {len(self.chapters)+1}")
                 itm = QtWidgets.QListWidgetItem(f"{ms//60000}:{(ms//1000)%60:02d}  {title}")
-                itm.setData(QtCore.Qt.UserRole, ms)
+                itm.setData(QtCore.Qt.ItemDataRole.UserRole, ms)
                 self.ch_list.addItem(itm)
                 self.chapters.append((ms, title))
         except:
@@ -753,7 +751,7 @@ class Player(QtWidgets.QMainWindow):
                 break
 
     def goto_chapter(self, item):
-        self.player.set_time(item.data(QtCore.Qt.UserRole))
+        self.player.set_time(item.data(QtCore.Qt.ItemDataRole.UserRole))
         if self.player.is_playing():
             self._start_vis_thread()
 
@@ -788,21 +786,21 @@ class Player(QtWidgets.QMainWindow):
         save_resume(self.resume_db)
         for p in valid:
             itm = QtWidgets.QListWidgetItem(Path(p).name)
-            itm.setData(QtCore.Qt.UserRole, p)
+            itm.setData(QtCore.Qt.ItemDataRole.UserRole, p)
             self.shelf_list.addItem(itm)
 
     def _open_from_shelf(self, item):
-        self.load_media(Path(item.data(QtCore.Qt.UserRole)))
+        self.load_media(Path(item.data(QtCore.Qt.ItemDataRole.UserRole)))
 
     # removed system tray support
 
     def changeEvent(self, e):
-        if e.type() == QtCore.QEvent.WindowStateChange and self.isMinimized():
+        if e.type() == QtCore.QEvent.Type.WindowStateChange and self.isMinimized():
             QtCore.QTimer.singleShot(0, self._enter_compact)
         super().changeEvent(e)
 
     def _enter_compact(self):
-        self.setWindowState(self.windowState() & ~QtCore.Qt.WindowMinimized)
+        self.setWindowState(self.windowState() & ~QtCore.Qt.WindowState.WindowMinimized)
         if not self.compact:
             self.prev_geom = self.geometry()
             self.compact = True
@@ -833,14 +831,14 @@ class Player(QtWidgets.QMainWindow):
 
     def open_bookmarks(self):
         dlg = BookmarkDialog(self)
-        dlg.exec_()
+        dlg.exec()
 
     def open_gallery(self):
         if not self.images:
             return
         dlg = GalleryDialog(self.images, self)
         dlg.resize(400, 300)
-        dlg.exec_()
+        dlg.exec()
 
     def open_visualizer(self):
         if self.vis_win is None:
@@ -913,7 +911,7 @@ class Player(QtWidgets.QMainWindow):
         btn_spin.valueChanged.connect(lambda v: (self.resume_db.__setitem__('ui_btn_size', v), save_resume(self.resume_db), self._apply_font_sizes()))
         lbl_spin.valueChanged.connect(lambda v: (self.resume_db.__setitem__('ui_title_size', v), save_resume(self.resume_db), self._apply_font_sizes()))
 
-        dlg.exec_()
+        dlg.exec()
 
     def _wipe_data(self):
         self.resume_db = {'__bookshelf__': [], 'ui_btn_size': 10, 'ui_title_size': 12, 'volume': 100}
@@ -947,4 +945,4 @@ if __name__ == '__main__':
     probe_cmd = find_ffprobe()
     player = Player(vlc_inst, probe_cmd)
     player.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())

@@ -1,6 +1,6 @@
 # Offline Audio Book Player
 
-A lightweight PyQt5 application for listening to audio books entirely offline. The player relies on VLC for playback and stores progress under `~/.config/m4bplayer` (or `%USERPROFILE%\.config\m4bplayer` on Windows).
+A lightweight PyQt6 application for listening to audio books entirely offline. The player relies on VLC for playback and stores progress under `~/.config/m4bplayer` (or `%USERPROFILE%\.config\m4bplayer` on Windows).
 
 ## Features
 
@@ -24,12 +24,12 @@ A lightweight PyQt5 application for listening to audio books entirely offline. T
 - [`ffmpeg`](https://ffmpeg.org/) for the visualizer feature
 - [`psutil`](https://pypi.org/project/psutil/) *(optional, for usage stats)*
 - `pyqtgraph`, `numpy`, `pyaudio` *(optional, for real-time visualizer)*
-- Python packages: `mutagen`, `python-vlc`, `PyQt5`, `pyttsx3`
+- Python packages: `mutagen`, `python-vlc`, `PyQt6`, `pyttsx3`
 
 Install the Python dependencies with:
 
 ```bash
-pip install mutagen python-vlc PyQt5 pyttsx3 psutil pyqtgraph numpy pyaudio  # optional: psutil and visualizer libs
+pip install mutagen python-vlc PyQt6 pyttsx3 psutil pyqtgraph numpy pyaudio  # optional: psutil and visualizer libs
 ```
 
 ## Windows 11 Setup
@@ -40,7 +40,7 @@ pip install mutagen python-vlc PyQt5 pyttsx3 psutil pyqtgraph numpy pyaudio  # o
 4. Open **PowerShell** or **Command Prompt** and run:
 
 ```powershell
-pip install mutagen python-vlc PyQt5 pyttsx3 psutil pyqtgraph numpy pyaudio  # optional: psutil and visualizer libs
+pip install mutagen python-vlc PyQt6 pyttsx3 psutil pyqtgraph numpy pyaudio  # optional: psutil and visualizer libs
 ```
 
 Run the application from the same terminal with:
